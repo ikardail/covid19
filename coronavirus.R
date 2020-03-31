@@ -1,24 +1,25 @@
 library(tidyverse)
 library(lubridate)
-library(stringdist)
+# library(stringdist)
 library(broom)
 library(rvest)
 library(rlang)
 library(nlme)
+library(fs)
 options(tibble.print_max = 300)
 
 # case and death data is from JHU github https://github.com/CSSEGISandData/COVID-19,
 # population and lockdown dates from wikipedia
 
 # function to match similar names within a list of names
-match_names <- function(x, min_dist = 2, ...) {
-  m <- stringdistmatrix(x, x, ...)
-  diag(m) <- NA
-  m[m > min_dist] <- NA
-  a = apply(m, 2, which.min)
-  b = map_int(a, length) > 0
-  map2_chr(x[b], a[b], ~ paste(x[.y], .x, sep = '___'))
-}
+# match_names <- function(x, min_dist = 2, ...) {
+#   m <- stringdistmatrix(x, x, ...)
+#   diag(m) <- NA
+#   m[m > min_dist] <- NA
+#   a = apply(m, 2, which.min)
+#   b = map_int(a, length) > 0
+#   map2_chr(x[b], a[b], ~ paste(x[.y], .x, sep = '___'))
+# }
 # function to plot on dual axes on log10 scale, after ordering by number of cases and filtering for a min
 cd_plot <- function(x, wrap, scale_dead = 100L, differenced = TRUE,
                     min_cases = 200L, comment = NULL, ...) { #browser()
@@ -30,7 +31,7 @@ cd_plot <- function(x, wrap, scale_dead = 100L, differenced = TRUE,
   }
   y <- x %>%
     group_by(!!wrap) %>%
-    summarise(cases_tot = if(!differenced) {sum(cases, na.rm = T)} else {max(cases, na.rm = T)}) %>%
+    summarise(cases_tot = if(differenced) {sum(cases, na.rm = T)} else {max(cases, na.rm = T)}) %>%
     filter(min_cases < cases_tot) %>%
     arrange(desc(cases_tot))
   left_join(y, x, by = quo_name(wrap)) %>%
@@ -47,7 +48,7 @@ cd_plot <- function(x, wrap, scale_dead = 100L, differenced = TRUE,
                         labels = scales::trans_format("log10", scales::math_format(10^.x)))) +
     scale_colour_manual(values = c("red", "black")) +
     theme_bw() + labs(y='Cases', title = paste0('Confirmed cases and deaths',
-          if(differenced) {" change from total before"}, comment),
+          if(differenced) {", newly reported"}, comment),
           subtitle = paste0('Log10 scaled values, min total cases > ', min_cases,
                             ', vertical line marks lockdown date'),
           caption = paste0('Cases on the left axis are at ', scale_dead,
@@ -77,7 +78,7 @@ names(lockdowns) <- lockdowns[1,]
 lockdown_country <- lockdowns %>%
   arrange(end, start) %>% group_by(country) %>% summarise(start = first(start), end = first(end))
 # read the data from CSV files after syncing to JHU github, setup for that not covered here...
-dat <- map(fs::dir_ls(path = "~/Documents/GitHub/COVID-19/csse_covid_19_data/csse_covid_19_daily_reports",
+dat <- map(fs::dir_ls(path = "../COVID-19/csse_covid_19_data/csse_covid_19_daily_reports",
        regexp = 'csv$'), read_csv, locale = locale(tz = 'UTC'))
 # Changing colnames in previous to match and make proper
 dat_a <- dat %>% map(~ rename_at(., vars(matches('/| ')), ~ str_replace(., '/| ', '_')))
@@ -133,7 +134,7 @@ dat_b <- dat_a %>%
   unite(location, Province_State, country, remove = F) %>%
   select(-Province_State, -Country_Region)
 # list countries and locations with similar names
-dat_b$location %>% unique() %>% sort %>% match_names(min_dist = 3, method = 'osa')
+# dat_b$location %>% unique() %>% sort %>% match_names(min_dist = 3, method = 'osa')
 dat_c <- dat_b %>%
   mutate(date = as_date(date)) %>%
   # adding up location totals on a date
@@ -143,7 +144,7 @@ dat_c <- dat_b %>%
   pivot_longer(c(cases, dead), values_drop_na = TRUE) %>%
   # filter when 0 was reported as well
   filter(value > 0) %>%
-  # differencing per location using date_upd
+  # differencing per location using date
   group_by(location, country, name) %>%
   arrange(date) %>%
   mutate(diff_value = case_when(
@@ -160,23 +161,23 @@ dat_d <- dat_c %>%
   filter(!is.na(value_cases)) %>%
   arrange(country, location, date)
 # check that data labels are consistent for China
-dat_d %>%
-  filter(country == 'China') %>%
-  ggplot(aes(date, value_cases)) +
-  geom_point() + facet_wrap(~ location) +
-  scale_y_log10()
-# plot locations with > 500 cases total
+# dat_d %>%
+#   filter(country == 'China') %>%
+#   ggplot(aes(date, value_cases)) +
+#   geom_point() + facet_wrap(~ location) +
+#   scale_y_log10()
+# plot locations with > 5000 cases total
 cd_plot(dat_d, location, min_cases = 5000)
-cd_plot(dat_d, location, min_cases = 10000, differenced = F)
-# countries with > 10000 cases, cumulative
-cd_plot(dat_d, country, min_cases = 10000, differenced = F)
-# countries > 10,000,000, cases per million of population > 100
+cd_plot(dat_d, location, min_cases = 5000, differenced = F)
+# countries with > 10000 cases, differenced
+cd_plot(dat_d, country, min_cases = 10000, differenced = T)
+# countries, > 50 cases per million of population
 dat_d %>% 
-  # filter(pop > 10000000) %>%
+  filter(pop > 300000) %>%
   mutate_at(vars(matches('cases|dead')), ~ . / pop * 1000000) %>%
-  cd_plot(country, min_cases = 50, comment = ', per 1 million of population', differenced = T)
+  cd_plot(country, min_cases = 100, comment = ', per 1 million of population', differenced = T)
 # countries I care about, with locations breakout and smaller threshold
-interest <- c('Australia', 'Russia', 'Canada', 'New Zealand', 'Israel', 'United Kingdom', 'Iceland')
+interest <- c('Australia', 'Russia', 'Canada', 'New Zealand', 'Israel', 'United Kingdom', 'Iceland', 'United States')
 # total counts per location in country of interest
 dat_d %>%
   filter(country %in% interest) %>%
@@ -186,79 +187,122 @@ dat_d %>%
   filter(country %in% interest) %>%
   mutate_at(vars(matches('cases|dead')), ~ . / pop * 1000000) %>%
   cd_plot(country, min_cases = 0, comment = ', per 1 million of population')
-# make dataset for modeling by country
+# make dataset for modeling by country, using deaths
 dat_e <- dat_d %>%
   group_by(country, pop, date, start) %>%
+  # country-wide sums on a day
   summarise_at(vars(value_cases, value_dead), sum, na.rm = T) %>%
+  # values per 1M of population
   mutate_at(vars(value_cases, value_dead), ~ . / pop * 1000000  ) %>%
   rename_all(~str_remove(., 'value_')) %>%
   group_by(country) %>%
   # some filtering
-  filter(!country %in% c('cruise', 'China'),
-         # from 1 case per 1M pop and up
-         cases > 1, !is.na(pop) ) %>%
-  mutate(n = n()) %>%
-  filter(n > 5) %>%
+  filter(!country %in% c('cruise'),
+         # from 0.01 dead per 1M pop and up
+         dead > 0.01,
+         !is.na(pop) ) %>%
+  # have at least 5 datapoints
+  filter(n() > 5) %>%
   arrange(date) %>%
-  # days from 1/1M
+  #age as days from first time it was >1 per 1M
   mutate(age = as.numeric(date - first(date)))
-dat_f <- dat_e %>% group_by(country) %>% arrange(date) %>%
-  # largest daily increase is ~ flex point/end of exponential
-  mutate(mid = which.max(cases - lag(cases))) %>%
-  # take data up to that one to estimate offset
-  filter(row_number() <= mid) %>%
+offsets <- dat_e %>%
+  # largest daily increase is ~ flex point, or end of exponential
+  mutate(mid = which.max(dead - lag(dead)),
+         mid = ifelse(mid < 4, n(), mid)) %>%
+  # take data up to that one to estimate offset better
+  filter(row_number() < mid) %>%
   nest() %>%
-  mutate(lm = map(data, ~ lm(log(cases) ~ age, data = .) ),
+  # lm of logged value over age in each country
+  mutate(lm = map(data, ~ lm(log(dead) ~ age, data = .) ),
          off = map_dbl(lm, ~ coef(.)[1]/coef(.)[2]),
          mu = map_dbl(lm, ~ coef(.)[2]),
-         first_1m = map(data, ~ summarise(., first_1m = first(date)))) %>%
-  unnest(c(first_1m)) %>%
-  select(country, off, mu, first_1m) %>%
-  left_join(dat_e) %>%
-  mutate(age = age + off) 
-mean(dat_f$mu)
-# fitting Gompertz model to cumulative cases by country or location
-fits <- nlme(log(cases) ~ A/B * (1 - exp(- B * age)),
+         f = map(data, summarise_at, vars(date, pop, start), first)) %>%
+  unnest(c(f)) %>%
+  # date when reach 1 dead per 1M pop
+  mutate(date_1 = date - off) %>% select(-lm, -date, -data)
+# plot exponential fits for offset values to make sure the fit worked
+# offsets %>% unnest(c(data)) %>% mutate(age = age + off) %>%
+  # ggplot(aes(age, log(dead))) +geom_point()+facet_wrap(~country)+geom_smooth(method='lm')+
+  # geom_hline(yintercept = 0) + geom_vline(xintercept = 0)+geom_abline(aes(slope = mu, intercept = 0))
+ungroup(offsets) %>% summarise_at(vars(mu, off), mean)
+# adjusting ages in original data for global fit
+dat_f <- offsets %>%
+  # select(country, off) %>%
+  left_join(dat_e, by = c('country', 'pop', 'start') ) %>%
+  mutate(age = age + off)
+# fitting Gompertz model to cumulative dead by country or location
+fits <- nlme(log(dead) ~ A/B * (1 - exp(- B * age)),
        data = dat_f,
        fixed = B + A  ~ 1,
        random = A + B ~ 1 | country,
-       start = c(A = 0.023, B = 0.1),
+       start = c(A = 0.24, B = 0.02),
        control = list(msVerbose = T, maxIter = 10000, msMaxIter = 1000))
 summary(fits)
+ranef(fits)
+# extracting coefficients and errors
+fix_cofs <- coef(summary(fits)) %>% data.frame %>%
+  rownames_to_column('name') %>%
+  select(name, val = Value, err = Std.Error)
+cofs <- VarCorr(fits) %>% unclass %>% 
+  data.frame(stringsAsFactors = F) %>%
+  rownames_to_column('name') %>%
+  slice(1:2) %>%
+  select(name, err = StdDev) %>%
+  mutate(err = as.numeric(err)) %>%
+  bind_rows(fix_cofs) %>%
+  group_by(name) %>%
+  summarise_all(sum, na.rm = T) %>%
+  pivot_wider(values_from = c(val, err))
+# general curve for all that fitted
+curve(exp(cofs$val_A/cofs$val_B * (1 - exp(-cofs$val_B * x))), 0, 300, 
+      # ylim = c(0, 1.05 * exp(cofs$val_A + cofs$err_A)),
+      main = 'Average fitted dead per 1 million of population',
+      ylab = 'total dead per 1M pop',
+      xlab = 'days since 1 death per 1M pop')
+abline(v = log(cofs$val_A/cofs$val_B) / cofs$val_B, lty = 2)
+abline(h = c(exp(cofs$val_A / cofs$val_B)), lty = 2)
+# plot fits vs actual for all, with predicted asymptots and inflexons
+coef(fits) %>% data.frame(stringsAsFactors = F) %>%
+  rownames_to_column('country') %>%
+  mutate(as = exp(A/B),
+         tm = log(A/B)/B) %>%
+  left_join(select(offsets, -off), by = 'country') %>%
+  mutate(date_tm = date_1 + tm,
+         as_tot = as * pop / 1000000) %>%
+  filter(as_tot < pop, !is.na(tm)) %>%
+  select(country, pop, start, date_1, date_tm, as, as_tot) %>%
+  arrange(desc(as))
 augment(fits, data = dat_f) %>%
   mutate(fit = exp(.fitted)) %>%
-  ggplot(aes(age, cases)) +
+  select(names(dat_f), fit) %>%
+  ggplot(aes(age, dead)) +
   geom_line() +
   geom_line(aes(y = fit), linetype = 2) +
   facet_wrap(~ country) +
   scale_y_log10()
-coef(summary(fits)) %>% data.frame %>%
-  rownames_to_column('name') %>%
-  select(name, Value, Std.Error) %>%
-  pivot_wider(values_from = c(Value, Std.Error))
-VarCorr(fits)
-ranef(fits)
-coefs <- coef(fits) %>% rownames_to_column(var = 'country') %>%
-  # separate(country, c('country', NA), sep = '/') %>%
-  # group_by(country) %>%
-  # summarise_all(mean) %>%
-  transmute(country = country, tm = log(A/B) / B, as = exp(A / B))
-dat_f %>% group_by(country, pop, start) %>% 
-  summarise(date_1m = first(st), age_1m = first(age)) %>% 
-  left_join(coefs) %>%
-  mutate(tm_date = tm + date_1m + age_1m, tot_cases = round(as * pop/1000000)) %>%
-  filter(tot_cases < pop * 0.8, !is.na(tm)) %>%
-  arrange(tm_date)
-# coefs and general curve for all that fitted
-cofs <- data.frame(t(fixef(fits)))
-curve(exp(cofs$S + cofs$A * (1 - exp(-cofs$B * x))), 0, 100,
-      main = 'Average fitted cases per 1 million of population',
-      ylab = 'total cases per 1M pop',
-      xlab = 'days since 10 case per 1M pop')
-abline(v = log(cofs$A) / cofs$B, lty = 2)
-abline(h = exp(cofs$S + cofs$A), lty = 2)
-dat_e %>% nest() %>%
-  mutate(nls = map(data, ~ try(nls(cases ~ exp(S + A * exp(- B * age)), data = .,
-                                   start = list(A = 4, B = 0.07, S = 3)))))
-summary(fits)
-https://e.infogram.com/e3205e42-19b3-4e3a-a452-84192884450d?parent_url=https%3A%2F%2Fwww.covid.is%2Fdata&src=embed#
+
+# the Iceland story, csvs have to be downloaded manually from covid19.is
+ice <- map(dir_ls(regexp = '\\.csv'), read_csv, col_types = 'ccc') %>%
+  bind_rows(.id = 'type') %>%
+  mutate(date = str_replace(X1, '\\.', '-') %>% paste0(., '-2020') %>% dmy) %>%
+  rename_at(3:4, ~c('nuhi', 'decode')) %>%
+  separate(type, into = c(NA, 'type', NA)) %>%
+  pivot_longer(c(nuhi, decode), values_drop_na = T) %>%
+  mutate(value = as.numeric(value)) %>%
+  filter(value > 0) %>%
+  group_by(type,) %>%
+  arrange(type, name, date) %>%
+  mutate(value_cum = cumsum(value))
+ggplot(ice, aes(date, value, colour=name))+geom_point()+facet_wrap(~type)+geom_line()+
+  scale_y_log10()
+ice_wide <- ice %>% select(-value_cum) %>%
+  pivot_wider(names_from = type, values_from = c(value)) %>%
+  mutate(ratio = cases/tests)
+ggplot(ice_wide, aes(date, ratio, colour = name)) + geom_line()+geom_point()+scale_y_log10()
+ggplot(ice_wide, aes(tests, cases, colour = name)) + geom_line()+
+  geom_point() + geom_smooth(method = 'lm')+scale_x_log10()+scale_y_log10()
+lmi <- ice_wide %>% drop_na %>% lme(log(cases) ~ log(tests), data = .,
+                                   random = ~ 1 |name)
+exp(ranef(lmi))
+exp(coef(lmi))
