@@ -51,6 +51,7 @@ dat_f <- coef(offsets)[[1]] %>%
 #   lmer(log(value) ~ age|country, data = .)
 # fit ML ranef model (quick)
 ff <- lmer(log(lv) ~ age + age | country, dat_f)
+# update offsets
 offsets_2_data <- coef(ff)[[1]] %>%
   rownames_to_column(var = 'country') %>%
   filter(age <= 0) %>%
@@ -73,7 +74,7 @@ dat_g %>%
 ggplot(dat_f,aes(age, log(lv)))+geom_point()+facet_wrap(~country)
 # MCMC in stan to get conf intervals for estimates
 sn = stan_lmer(log(lv) ~ age | country, dat_g, cores = 4, iter = 10000) # ~ 10 mins
-sn; summary(sn); 
+summary(sn)
 # filter so that 95% end of B is still negative, i.e. decline significantly present
 decl_country <- posterior_interval(sn, regex_pars = 'b\\[age') %>%
   data.frame(stringsAsFactors = F) %>%
@@ -103,9 +104,10 @@ cofs_country <- data.frame(se = se(sn)[-1], stringsAsFactors = F) %>%
          as_high = exp(exp(lA + se_lA)),
          md = lA / B,
          se_md = sqrt(md^2*(se_lA^2/lA^2+se_B^2/B^2-
-                              se_lA/lA*se_B/B*2*attr(VarCorr(sn)$country,'correlation')[1,2]))
+                   se_lA/lA*se_B/B*2*attr(VarCorr(sn)$country,'correlation')[1,2])) %>%
+           round
          ) %>%
-  filter(se_lA < 0.8 * lA, as_high < 1000000, !is.na(A)) %>%
+  # filter(se_lA < 0.8 * lA, as_high < 1000000, !is.na(A)) %>%
   # select(country, A, B, as, as_high, md, se_md) %>%
   inner_join(decl_country)
 (cofs = summarise_at(cofs_country, vars(A, B, 
@@ -134,7 +136,7 @@ preds %>%
   # filter(country %in% c('Italy', 'Spain', 'France')) %>%
   # filter(country %in% c('South Korea', 'Japan', 'China')) %>%
   ggplot(aes(date, value)) +
-  geom_vline(aes(xintercept = md), linetype = 2, colour = 'green') +
+  geom_vline(aes(xintercept = md), linetype = 1, colour = 'green') +
   geom_point(alpha = 0.7, size = 1.5) +
   geom_line(aes(y = pred), colour = 'red', size = 1) +
   geom_hline(aes(yintercept = as), linetype = 2) +
@@ -144,5 +146,5 @@ preds %>%
   scale_y_log10() +
   theme_bw()
 preds %>% group_by(country, pop, start, date_1) %>%
-  summarise_at(vars(as, as_high, md, se_md, value), last) %>%
-  arrange(md)
+  summarise_at(vars(value, as, as_high, md, se_md), last) %>%
+  arrange(desc(value))
