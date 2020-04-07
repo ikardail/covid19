@@ -21,7 +21,7 @@ pop <- select(pop, country = `Country (or dependent territory)`,
 # get the lockdown dates from Wikipedia table, they keep changing the xpath, so need to verify on each update...
 wiki_qua <- read_html("https://en.wikipedia.org/wiki/National_responses_to_the_2019%E2%80%9320_coronavirus_pandemic")
 lockdowns <- wiki_qua %>%
-  html_nodes(xpath = '//*[@id="mw-content-text"]/div/table[5]') %>%
+  html_nodes(xpath = '//*[@id="mw-content-text"]/div/table[4]') %>%
   html_table(fill = TRUE) %>% .[[1]] 
 names(lockdowns) <- lockdowns[1,]
 (lockdowns <- lockdowns[-c(1,2, nrow(lockdowns),nrow(lockdowns)-1),] %>%
@@ -88,7 +88,7 @@ dat_b <- dat %>%
   unite(location, Province_State, country, remove = F) %>%
   select(-Province_State, -Country_Region)
 # list countries and locations with similar names
-dat_b$country %>% unique() %>% sort
+# dat_b$country %>% unique() %>% sort
 # dat_b$location %>% unique() %>% sort %>% match_names(min_dist = 3, method = 'osa')
 # making long, filtering
 dat_d <- dat_b %>%
@@ -107,12 +107,12 @@ dat_d <- dat_b %>%
 # worst locations
 cd_plot(dat_d, location, min_dead = 100)
 # countries with > 500 dead, differenced
-cd_plot(dat_d, country, min_dead = 100, differenced = F)
+cd_plot(dat_d, country, min_dead = 100, differenced = T)
 # countries, > 10 dead per million of population, most informative for dynamics
 dat_d %>% 
   filter(pop > 300000) %>%
   mutate(value = value / pop * 1000000) %>%
-  cd_plot(country, min_dead = 5, comment = ', per 1 million of population', differenced = F)
+  cd_plot(country, min_dead = 10, comment = ', per 1 million of population', differenced = T)
 # countries I care about, with locations breakout and smaller threshold
 interest <- c('Australia', 'Russia', 'Canada', 'New Zealand', 'Israel', 'United Kingdom', 'Iceland', 'United States')
 # daily increases per 1M of pop in countries of interest
@@ -144,8 +144,8 @@ ice_wide <- ice %>% select(-value_cum) %>%
 ggplot(ice_wide, aes(date, ratio, colour = name)) + geom_line()+geom_point()+scale_y_log10()
 ggplot(ice_wide, aes(tests, cases, colour = name)) + geom_line()+
   geom_point() + geom_smooth(method = 'lm')+scale_x_log10()+scale_y_log10()
-lmi <- ice_wide %>% drop_na %>% lme(log(cases) ~ log(tests), data = .,
-                                   random = ~ 1 |name)
-exp(ranef(lmi))
-exp(coef(lmi))
+# lmi <- ice_wide %>% drop_na %>% lme(log(cases) ~ log(tests), data = .,
+#                                    random = ~ 1 |name)
+# exp(ranef(lmi))
+# exp(coef(lmi))
 save(dat_d, file = 'imported.Rdata')
