@@ -29,7 +29,8 @@ dat_e <- dat_d %>%
 #   filter(map_lgl(lms, ~ class(.) == 'lm')) %>%
 #   mutate(off = map_dbl(lms, ~ coef(.)[1]/coef(.)[2]))
 # offsets as random effect on early obs
-offsets <- lmer(log(value) ~ age|country, data = filter(dat_e, between(value, 1, 10)))
+offsets <- lmer(log(value) ~ age|country,
+                data = filter(dat_e, between(value, 1, 10)|(date < start + 3 & !is.na(start))))
 # adjusting the age by offsets calculated from early exp fit
 dat_f <- coef(offsets)[[1]] %>%
   rownames_to_column('country') %>%
@@ -50,14 +51,15 @@ dat_f <- coef(offsets)[[1]] %>%
 #   filter(age < md, between(value, 1, 10)) %>%
 #   lmer(log(value) ~ age|country, data = .)
 # fit ML ranef model (quick)
-ff <- lmer(log(lv) ~ age + age | country, dat_f)
+ff <- lmer(log(lv) ~ age + (age | country), dat_f)
+summary(ff)
 # update offsets
 offsets_2_data <- coef(ff)[[1]] %>%
   rownames_to_column(var = 'country') %>%
   filter(age <= 0) %>%
   transmute(country = country, md = - (`(Intercept)` - log(-age)) / age ) %>%
   left_join(dat_f) %>%
-  filter(age < md, between(value, 0.1, 1))
+  filter(age < md)
 offsets_2 <- lmer(log(value) ~ age|country, data = offsets_2_data)
 # adjust age with offsets again, mostly much smaller
 dat_g <- coef(offsets_2)[[1]] %>%
@@ -73,7 +75,7 @@ dat_g %>%
   geom_hline(yintercept = 0) + geom_abline(aes(slope = mu, intercept = 0), linetype = 2)
 ggplot(dat_f,aes(age, log(lv)))+geom_point()+facet_wrap(~country)
 # MCMC in stan to get conf intervals for estimates
-sn = stan_lmer(log(lv) ~ age | country, dat_g, cores = 4, iter = 10000) # ~ 10 mins
+sn = stan_lmer(log(lv) ~ age + (age | country), dat_g, cores = 4, iter = 5000) # ~ 1 mins/1000 iterations
 summary(sn)
 # filter so that 95% end of B is still negative, i.e. decline significantly present
 decl_country <- posterior_interval(sn, regex_pars = 'b\\[age') %>%
@@ -82,18 +84,18 @@ decl_country <- posterior_interval(sn, regex_pars = 'b\\[age') %>%
   mutate(nm = str_remove_all(nm, '^b\\[|\\]| country') %>%
            str_replace_all('_', ' ')) %>%
   separate(nm, c('name','country'), sep = ':') %>%
-  filter(X95. < 0) %>%
+  filter(X95. + fixef(sn)[2] < 0) %>%
   select(country)
 # calculate asympt level and flex date with errors from coefs, propagating coeff correlation into errors
 VarCorr(sn)
-cofs_country <- data.frame(se = se(sn)[-1], stringsAsFactors = F) %>%
+cofs_country <- data.frame(se = se(sn), stringsAsFactors = F) %>%
   rownames_to_column(var = 'nm') %>%
   mutate(nm = str_remove_all(nm, '^b\\[|\\]| country') %>%
            str_replace('\\(Intercept\\)', 'int') %>%
            str_replace_all('_', ' ')) %>%
   separate(nm, c('name','country'), sep = ':') %>%
   pivot_wider(values_from = se, names_prefix = 'se_') %>%
-  bind_cols(coef(sn)[[1]]) %>%
+  right_join(rownames_to_column(coef(sn)[[1]], var = 'country')) %>%
   mutate(B = - age, 
          se_B = se_age,
          lA = `(Intercept)` - log(B),
@@ -107,9 +109,9 @@ cofs_country <- data.frame(se = se(sn)[-1], stringsAsFactors = F) %>%
                    se_lA/lA*se_B/B*2*attr(VarCorr(sn)$country,'correlation')[1,2])) %>%
            round
          ) %>%
-  # filter(se_lA < 0.8 * lA, as_high < 1000000, !is.na(A)) %>%
+  filter(se_lA < lA, as < 1000000, !is.na(A)) #%>%
   # select(country, A, B, as, as_high, md, se_md) %>%
-  inner_join(decl_country)
+  # inner_join(decl_country)
 (cofs = summarise_at(cofs_country, vars(A, B, 
                                         as_high,
                                         as), median, na.rm =T))
@@ -147,4 +149,4 @@ preds %>%
   theme_bw()
 preds %>% group_by(country, pop, start, date_1) %>%
   summarise_at(vars(value, as, as_high, md, se_md), last) %>%
-  arrange(desc(value))
+  arrange(desc(md))

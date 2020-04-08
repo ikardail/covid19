@@ -21,7 +21,7 @@ pop <- select(pop, country = `Country (or dependent territory)`,
 # get the lockdown dates from Wikipedia table, they keep changing the xpath, so need to verify on each update...
 wiki_qua <- read_html("https://en.wikipedia.org/wiki/National_responses_to_the_2019%E2%80%9320_coronavirus_pandemic")
 lockdowns <- wiki_qua %>%
-  html_nodes(xpath = '//*[@id="mw-content-text"]/div/table[4]') %>%
+  html_nodes(xpath = '//*[@id="mw-content-text"]/div/table[5]') %>%
   html_table(fill = TRUE) %>% .[[1]] 
 names(lockdowns) <- lockdowns[1,]
 (lockdowns <- lockdowns[-c(1,2, nrow(lockdowns),nrow(lockdowns)-1),] %>%
@@ -29,7 +29,11 @@ names(lockdowns) <- lockdowns[1,]
   mutate_at(vars(Start, End), ~ str_sub(., 1, 10) %>% ymd(.)) %>%
   rename_all(str_to_lower) %>% arrange(desc(start)))
 lockdown_country <- lockdowns %>%
-  arrange(end, start) %>% group_by(country) %>% summarise(start = first(start), end = first(end))
+  arrange(end, start) %>%
+  group_by(country) %>%
+  summarise(start = first(start), end = first(end)) %>%
+  # adding China manually
+  bind_rows(tibble(country = 'China', start = dmy('24-01-2020')))
 # read the data from CSV files after syncing to JHU github, setup for that not covered here...
 dat <- map(fs::dir_ls(path = "../COVID-19/csse_covid_19_data/csse_covid_19_daily_reports",
        regexp = 'csv$'), read_csv, locale = locale(tz = 'UTC'))
@@ -78,6 +82,7 @@ dat_b <- dat %>%
     Province_State = case_when(
       str_detect(Province_State, 'ruise|rincess') ~ 'cruise',
       str_detect(Province_State, 'Chicago') ~ 'Chicago',
+      str_detect(Province_State, 'King County, WA') ~ 'Washington',
       str_detect(Province_State, 'Orange') ~ 'Orange',
       str_detect(Province_State, ', ON') ~ 'Ontario',
       str_detect(Province_State, 'Fench Guiana') ~ 'French Guiana',
@@ -106,15 +111,19 @@ dat_d <- dat_b %>%
   arrange(country, location, date)
 # worst locations
 cd_plot(dat_d, location, min_dead = 100)
-# countries with > 500 dead, differenced
+# countries with > 100 dead, differenced
 cd_plot(dat_d, country, min_dead = 100, differenced = T)
 # countries, > 10 dead per million of population, most informative for dynamics
 dat_d %>% 
   filter(pop > 300000) %>%
   mutate(value = value / pop * 1000000) %>%
-  cd_plot(country, min_dead = 10, comment = ', per 1 million of population', differenced = T)
+  cd_plot(country, min_dead = 5, comment = ', per 1 million of population', differenced = T)
+# US by location
+dat_d %>% 
+  filter(country == 'United States') %>%
+  cd_plot(location, min_dead = 10, differenced = T)
 # countries I care about, with locations breakout and smaller threshold
-interest <- c('Australia', 'Russia', 'Canada', 'New Zealand', 'Israel', 'United Kingdom', 'Iceland', 'United States')
+interest <- c('Australia', 'Russia', 'Canada', 'New Zealand', 'Israel', 'United Kingdom', 'Iceland')
 # daily increases per 1M of pop in countries of interest
 dat_d %>%
   filter(country %in% interest) %>%
